@@ -1,0 +1,75 @@
+@startuml 0001-estilo-cliente-servidor-rest-semana1
+
+allowmixing
+
+skinparam packageStyle rectangle
+skinparam shadowing false
+hide empty members
+
+title Diagrama de Clases y Paquetes - Cliente-Servidor con API GATEWAY (Semana 1)
+
+package "FrontendWeb" as FrontendWeb {
+    class ComponenteResponsivoPC <<boundary>>
+    class ComponenteResponsivoTablet <<boundary>>
+}
+
+package "PkgApiGateway" as PkgApiGateway {
+    component [ApiGateway] as ApiGateway <<gateway>>
+    class DeviceDiscriminator <<controller>>
+}
+
+package "BackendServidor" as BackendServidor {
+
+    package "PkgControladores" as PkgControladores {
+        class NoticiasRestController <<controller>>
+        class SuscripcionesRestController <<controller>>
+        class FacturacionStripeRestController <<controller>>
+        class EstadisticasRestController <<controller>>
+    }
+
+    package "PkgNegocio" as PkgNegocio {
+        class ServicioNoticias <<service>>
+        class ServicioSuscripciones <<service>>
+        class ServicioFacturacion <<service>>
+        class ServicioEstadisticas <<service>>
+    }
+
+    package "PkgDatos" as PkgDatos {
+        class AdminRedaccionDAO <<dao>>
+        class SuscriptoresDAO <<dao>>
+    }
+}
+
+cloud "Servicios Externos" {
+    component [Pasarela Stripe API] as StripeAPI <<external service>>
+}
+
+
+' Frontend responsivo -> API Gateway
+ComponenteResponsivoPC --> ApiGateway : HTTP/REST \nUser-Agent: PC
+ComponenteResponsivoTablet --> ApiGateway : HTTP/REST \nUser-Agent: Tablet
+
+' API Gateway
+ApiGateway --> DeviceDiscriminator : discrimina PC / Tablet (User-Agent)
+ApiGateway --> NoticiasRestController
+ApiGateway --> SuscripcionesRestController 
+ApiGateway --> FacturacionStripeRestController
+ApiGateway --> EstadisticasRestController
+
+' Controladores -> Servicios
+NoticiasRestController --> ServicioNoticias
+SuscripcionesRestController --> ServicioSuscripciones
+FacturacionStripeRestController --> ServicioFacturacion
+EstadisticasRestController --> ServicioEstadisticas
+
+' Servicios -> DAOs
+ServicioNoticias --> AdminRedaccionDAO
+ServicioEstadisticas --> AdminRedaccionDAO
+
+ServicioSuscripciones --> SuscriptoresDAO
+ServicioFacturacion --> SuscriptoresDAO
+
+' Facturacion -> Servicio externo
+ServicioFacturacion ..> StripeAPI : HTTPS / REST
+
+@enduml
