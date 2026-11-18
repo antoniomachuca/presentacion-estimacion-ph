@@ -1,0 +1,289 @@
+@startuml 0003-arquitectura-capas-semana3
+
+allowmixing
+
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 12
+skinparam packageTitleAlignment left
+skinparam nodesep 40
+skinparam ranksep 70
+skinparam class {
+    BackgroundColor White
+    BorderColor #333333
+}
+skinparam note {
+    BackgroundColor #FFF8C4
+    BorderColor #B59F00
+    FontSize 11
+}
+skinparam package {
+    BorderColor #444444
+}
+
+title Diagrama de Clases y Paquetes - Arquitectura Cliente-Servidor en Capas (Semana 3)
+
+' =====================================================
+' CAPA 1 - CLIENTE
+' =====================================================
+package "Cliente (FrontendWeb)" as CLI #EAF2FB {
+    class ComponenteResponsivoPC {
+        - tipoDispositivo: TipoDispositivo = PC
+        + solicitarNoticia(seccion: Seccion, idSuscripcion: String)
+        + solicitarAlta(secciones: Seccion[], modalidad: Modalidad)
+        + solicitarBaja(idSuscripcion: String, seccion: Seccion)
+        + consultarEstadisticas()
+    }
+    class ComponenteResponsivoTablet {
+        - tipoDispositivo: TipoDispositivo = TABLET
+        + solicitarNoticia(seccion: Seccion, idSuscripcion: String)
+        + solicitarAlta(secciones: Seccion[], modalidad: Modalidad)
+        + solicitarBaja(idSuscripcion: String, seccion: Seccion)
+        + consultarEstadisticas()
+    }
+    note as N_ST
+        <b>Estilo Cliente-Servidor en capas</b> (ADR-0001.3)
+        Cliente -> Lógica de negocio -> Acceso a datos.
+        Comunicación HTTP/REST (JSON), servidor sin estado.
+    end note
+}
+
+' =====================================================
+' PAQUETE ADICIONAL - COMUNICACIÓN
+' =====================================================
+package "PkgApiGateway" as COM <<comunicación>> #F2F2F2 {
+    component GW [
+        <b>ApiGateway</b>
+        ----
+        - rutas: Map<ruta, controlador>
+        ----
+        + recibirPeticion(peticion)
+        + redirigir(peticion, tipo: TipoDispositivo)
+    ]
+    class DeviceDiscriminator {
+        - userAgent: String
+        + discriminar(userAgent: String): TipoDispositivo
+        + añadirCabecera(peticion): X-Device-Type
+    }
+    note as N_GW
+        <b>Patrón API Gateway</b> (ADR-0002)
+        Punto único de entrada. Solo dos funciones:
+        identificar PC/Tablet (User-Agent -> X-Device-Type)
+        y redirigir al controlador.
+    end note
+    GW --> DeviceDiscriminator : identifica el dispositivo con
+    N_GW .. GW
+}
+
+' =====================================================
+' CAPA 2 - SERVIDOR / LÓGICA DE NEGOCIO
+' =====================================================
+package "BackendServidor" as NEG <<lógica de negocio>> #EAF7EE {
+
+    package "PkgControladores" as CTRL #FFFFE0 {
+        class NoticiasController {
+            - accesoNoticias: NoticiasProtectionProxy
+            + leerNoticia(seccion: Seccion, idSuscripcion: String)
+            + publicarNoticia(noticia: Noticia)
+        }
+        class SuscripcionesController {
+            + altaSuscripcion(secciones: Seccion[], modalidad: Modalidad)
+            + bajaSuscripcion(idSuscripcion: String, seccion: Seccion)
+        }
+        class EstadisticasController {
+            + registrarEventoUso(evento: EventoUso)
+            + consultarEstadisticas(): Metricas
+        }
+        class WebhookController <<Subject>> {
+            - observadores: ServicioSuscripciones[]
+            + recibirWebhookStripe(evento: EventoStripe)
+            + suscribir(observador: ServicioSuscripciones)
+            + notificar(evento: EventoStripe)
+            - verificarFirmaStripe(evento: EventoStripe): boolean
+        }
+        note as N_OB
+            <b>Patrón Observer</b> (ADR-0003 / 0006)
+            WebhookController (Subject) recibe el webhook
+            de Stripe y notifica a ServicioSuscripciones,
+            que actualiza el estado de pago
+            (al corriente, pago fallido, suspendida).
+        end note
+        N_OB .. WebhookController
+    }
+
+    package "PkgSeguridad" as SEG <<seguridad>> #FBEAEA {
+        class NoticiasProtectionProxy <<Protection Proxy>> {
+            - servicioReal: NoticiasServiceImpl
+            + leerNoticia(seccion: Seccion, idSuscripcion: String)
+            + publicarNoticia(noticia: Noticia)
+            - verificarAcceso(idSuscripcion: String, seccion: Seccion): boolean
+        }
+        note as N_PX
+            <b>Patrón Proxy de Protección</b> (ADR-0004)
+            Intercepta la lectura, valida el identificador
+            opaco y delega en el servicio real.
+            Sin datos personales.
+        end note
+        N_PX .. NoticiasProtectionProxy
+    }
+
+    package "PkgNoticias" as NOT #FFFFE0 {
+        interface INoticiasService {
+            + leerNoticia(seccion: Seccion, idSuscripcion: String)
+            + publicarNoticia(noticia: Noticia)
+        }
+        class NoticiasServiceImpl <<Subject>> {
+            - observadores: ObservadorEstadisticas[]
+            + leerNoticia(seccion: Seccion, idSuscripcion: String)
+            + publicarNoticia(noticia: Noticia)
+            - notificarEvento(evento: EventoUso)
+        }
+        class CanalTematico {
+            - seccion: Seccion
+            - suscritos: String[]
+            + publicar(noticia: Noticia)
+            + suscribir(idSuscripcion: String)
+            + darDeBaja(idSuscripcion: String)
+        }
+        enum Seccion {
+            POLITICA
+            ECONOMIA
+            SOCIEDAD
+            NACIONALES
+            INTERNACIONALES
+        }
+        note as N_PS
+            <b>Patrón Publish-Subscribe</b> (ADR-0004)
+            Cada una de las 5 secciones es un canal temático:
+            los redactores publican y los suscriptores
+            anónimos consumen.
+        end note
+        NoticiasServiceImpl ..|> INoticiasService : implementa
+        NoticiasServiceImpl "1" --> "1..5" CanalTematico : publica en
+        CanalTematico --> Seccion : pertenece a
+        N_PS .. CanalTematico
+    }
+
+    package "PkgSuscripcionesPagos" as SUS #FFFFE0 {
+        class ServicioSuscripciones <<Observer>> {
+            + crearSuscripcion(secciones: Seccion[], modalidad: Modalidad): String
+            + cancelarSuscripcion(idSuscripcion: String, seccion: Seccion)
+            + actualizar(eventoPago: EventoStripe)
+        }
+        class ServicioFacturacion {
+            - pasarela: PasarelaPago
+            + contratarModalidad(idSuscripcion: String, modalidad: Modalidad)
+        }
+        interface PasarelaPago {
+            + crearSuscripcionRecurrente(modalidad: Modalidad, importe: double)
+            + cancelarSuscripcionRecurrente(idSuscripcionStripe: String)
+        }
+        class StripeAdapter <<Adapter>> {
+            + crearSuscripcionRecurrente(modalidad: Modalidad, importe: double)
+            + cancelarSuscripcionRecurrente(idSuscripcionStripe: String)
+        }
+        enum Modalidad {
+            TRIMESTRAL = 70 €
+            SEMESTRAL = 130 €
+            ANUAL = 190 €
+        }
+        note as N_AD
+            <b>Patrón Adapter</b> (ADR-0003)
+            ServicioFacturacion solo conoce PasarelaPago;
+            StripeAdapter es la única clase que habla con Stripe.
+        end note
+        ServicioSuscripciones --> ServicioFacturacion : tramita el cobro con
+        ServicioFacturacion --> PasarelaPago : cobra a través de
+        StripeAdapter ..|> PasarelaPago : implementa
+        ServicioFacturacion --> Modalidad : calcula el importe según
+        N_AD .. StripeAdapter
+    }
+
+    package "PkgEstadisticas" as EST #FFFFE0 {
+        interface ObservadorEstadisticas {
+            + actualizar(evento: EventoUso)
+        }
+        class ServicioEstadisticas <<Facade>> {
+            + actualizar(evento: EventoUso)
+            + registrarEventoUso(evento: EventoUso)
+            + consultarEstadisticas(): Metricas
+            - calcularMasLeidas()
+            - calcularPermanencia()
+            - calcularTasaRebote()
+            - calcularConversiones()
+        }
+        note as N_EST
+            <b>Patrones Observer + Facade</b> (ADR-0005)
+            NoticiasServiceImpl y ServicioSuscripciones notifican
+            los eventos de uso; ServicioEstadisticas ofrece
+            una interfaz única con las 4 métricas (RF6).
+        end note
+        ServicioEstadisticas ..|> ObservadorEstadisticas : implementa
+        N_EST .. ServicioEstadisticas
+    }
+}
+
+' =====================================================
+' CAPA 3 - ACCESO A DATOS
+' =====================================================
+package "PkgDatos" as DAT <<acceso a datos>> #FDF3E6 {
+    component LQ [
+        <b>libpq</b>
+        ----
+        + conectar(cadenaConexion: String)
+        + ejecutarConsulta(sql: String, parametros: String[]): Resultado
+        + desconectar()
+    ]
+    note as N_DAT
+        <b>Acceso directo sin DAO</b> (ADR-0007)
+        Los servicios usan directamente el componente
+        de acceso libpq, sin clases DAO intermedias.
+        Sin datos personales ni de tarjeta (ADR-0003 / 0004).
+    end note
+    N_DAT .. LQ
+}
+
+
+' =====================================================
+' SERVICIOS EXTERNOS
+' =====================================================
+component "Pasarela Stripe" as STR <<external service>> #F3EAFB
+note as N_RT
+    <b>Patrón Retry</b> (ADR-0006)
+    Stripe Billing reintenta el cobro hasta 3 veces;
+    el backend solo registra el resultado de cada evento.
+    El webhook no pasa por el API Gateway (ADR-0003).
+end note
+N_RT .. STR
+
+' =====================================================
+' RELACIONES ENTRE PAQUETES («use»)
+' =====================================================
+label "<<use>>\nHTTP/REST (JSON)" as L_CLI
+label "<<use>>\nX-Device-Type" as L_COM
+label "<<use>>" as L_NEG
+CLI .right. L_CLI
+L_CLI .right.> COM
+COM .right. L_COM
+L_COM .right.> CTRL
+NEG .right. L_NEG
+L_NEG .right.> DAT
+
+CTRL .right.> SEG : <<use>>
+CTRL .right.> SUS : <<use>>
+CTRL ..> EST : <<use>>
+SEG .right.> NOT : <<use>>
+NOT .right.> EST : <<use>>
+SUS .right.> EST : <<use>>
+
+' =====================================================
+' EXCEPCIONES: RELACIONES CONCRETAS ENTRE CLASES
+' =====================================================
+NoticiasProtectionProxy ..|> INoticiasService : implementa
+NoticiasProtectionProxy --> NoticiasServiceImpl : delega en
+WebhookController --> ServicioSuscripciones : notifica el resultado de pago
+StripeAdapter --> STR : solicita el cobro recurrente\n(HTTPS/REST)
+STR --> WebhookController : notifica el resultado\ndel pago (webhook)
+
+@enduml
